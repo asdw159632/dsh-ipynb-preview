@@ -103,6 +103,11 @@ How it behaves:
 - **One renderer.** The sidebar viewer and the document preview render the same
   component, so the same notebook looks the same in both places; the test suite
   asserts both renders are byte-identical.
+- **It scrolls.** better-sidebar mounts a viewer as a flex item of a column pane
+  whose ancestor clips overflow, so the viewer root is its own scroll container
+  (`flex: 1; min-height: 0; overflow: auto` — the contract its built-in viewers
+  follow). The notebook itself stays a plain block, so the document preview
+  keeps its single, host-owned scroller.
 - **Wrapped source lines.** The sidebar pane is narrow, so code cells wrap there
   instead of scrolling sideways.
 - **Read limit.** The sidebar hands a viewer at most 5 MB of text. A larger

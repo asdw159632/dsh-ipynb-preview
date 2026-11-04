@@ -768,22 +768,51 @@ console.log("\n=== images: zoom and save ===");
       viewerId: viewer.id,
     })
   );
-  check("the sidebar viewer renders exactly what the document preview renders",
-    sidebarHtml === html,
-    `${sidebarHtml.length} vs ${html.length} bytes`);
+  check("the sidebar viewer wraps the notebook in the pane's scroll container",
+    sidebarHtml.startsWith('<div class="dshnb-pane">') &&
+      sidebarHtml.includes('class="dshnb"'),
+    sidebarHtml.slice(0, 60));
+
+  // better-sidebar mounts a viewer as a flex item of a column pane whose
+  // ancestor clips overflow; the wrapper is the scroller (without it the
+  // notebook cannot be scrolled at all). Everything inside it must still be
+  // exactly the document preview's render.
+  const unwrapped = sidebarHtml
+    .replace(/^<div class="dshnb-pane">/, "")
+    .replace(/<\/div>$/, "");
+  check("the notebook inside the wrapper is the document preview's render",
+    unwrapped === html,
+    `${unwrapped.length} vs ${html.length} bytes`);
+  check("the document preview does not get a second scroller",
+    !html.includes("dshnb-pane"));
   check("the sidebar viewer reads the notebook, not its JSON",
     sidebarHtml.includes('class="dshnb"') && !sidebarHtml.includes("&quot;cell_type&quot;"));
 
+  // The rule has to be the same contract the built-in viewers follow, and it
+  // must not leak onto the shared notebook root.
+  const paneRule = /\.dshnb-pane\s*\{([^}]*)\}/.exec(t.css)?.[1] || "";
+  check("the pane wrapper is a flex child that owns the scroll",
+    /flex:\s*1/.test(paneRule) &&
+      /min-height:\s*0/.test(paneRule) &&
+      /overflow:\s*auto/.test(paneRule),
+    paneRule.trim());
+  const nbRule = /\.dshnb\s*\{([^}]*)\}/.exec(t.css)?.[1] || "";
+  check("the notebook root itself stays a plain block",
+    !/overflow/.test(nbRule) && !/height:\s*100%/.test(nbRule), nbRule.trim());
+
   // Past the sidebar's 5 MiB ceiling `content` is absent and `largeFile` carries
   // the size; the viewer has to say so instead of rendering an empty shell.
-  const tooLarge = stripTags(renderToStaticMarkup(
+  const tooLargeHtml = renderToStaticMarkup(
     React.createElement(viewer.component, {
       largeFile: { size: 12 * 1024 * 1024 },
       path: "big.ipynb",
       title: "big.ipynb",
       viewerId: viewer.id,
     })
-  ));
+  );
+  check("the too-large notice also sits in the pane's scroller",
+    tooLargeHtml.startsWith('<div class="dshnb-pane">'));
+  const tooLarge = stripTags(tooLargeHtml);
   check("a notebook past the read limit explains itself",
     tooLarge.includes("too large") && tooLarge.includes("12.0 MB"), tooLarge.trim());
 

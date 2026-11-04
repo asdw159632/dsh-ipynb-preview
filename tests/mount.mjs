@@ -457,6 +457,24 @@ check("the sidebar viewer rendered the notebook",
 check("the sidebar viewer shows the notebook header",
   textOf(sidebarContainer).includes("Jupyter notebook"));
 
+// The pane wrapper is what makes the notebook scrollable at all: better-sidebar
+// mounts a viewer as a flex item of a clipped column pane, so the scroller has
+// to be the viewer's own root.
+const paneNodes = [];
+const findPane = (node) => {
+  const cls = node.attributes?.class || "";
+  if (typeof cls === "string" && cls.split(/\s+/).includes("dshnb-pane")) {
+    paneNodes.push(node);
+  }
+  for (const child of node.children || []) findPane(child);
+};
+findPane(sidebarContainer);
+check("the sidebar viewer mounted exactly one pane scroller",
+  paneNodes.length === 1, `${paneNodes.length}`);
+check("the pane scroller holds the notebook",
+  (paneNodes[0]?.children || []).some(
+    (child) => String(child.attributes?.class || "").split(/\s+/).includes("dshnb")));
+
 // A notebook past the sidebar's read ceiling arrives with no text at all.
 const bigContainer = new El("div");
 documentStub.body.appendChild(bigContainer);
