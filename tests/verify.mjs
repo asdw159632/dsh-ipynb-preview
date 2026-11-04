@@ -69,6 +69,105 @@ check("publishes the wrap toggle", definition?.wrap === true);
 check("bytes-complete loading", definition?.loading === "bytes-complete");
 check("body key == definition id", bodyReg?.spec?.key === definition?.id);
 
+/* ---- dsh-better-sidebar integration ---------------------------------- */
+
+console.log("\n=== dsh-better-sidebar integration ===");
+
+// A profile without dsh-better-sidebar is the common deployment, and the
+// shipped preview must still work there, so the service cannot be a hard
+// dependency: it must not appear in the plugin's inject list.
+check("betterSidebar is not a hard service dependency",
+  !(exports.inject || []).includes("betterSidebar"),
+  JSON.stringify(exports.inject));
+
+// The client context of a profile with no better-sidebar simply has no
+// `inject` call to make; apply must not throw and must still register the
+// document preview.
+let previewsWithoutSidebar = 0;
+exports.apply({
+  effect: (fn) => fn(),
+  documentPreviews: {
+    register: () => { previewsWithoutSidebar += 1; return () => {}; },
+  },
+  slots: { register: () => () => {} },
+});
+check("a context without ctx.inject still gets the document preview",
+  previewsWithoutSidebar === 1);
+
+// With better-sidebar present the plugin waits for its service in a scoped
+// `ctx.inject` child (the same shape better-sidebar's own native bridge uses:
+// a child context whose `.get(name)` returns the service).
+let sidebarRequested = null;
+let viewer = null;
+let scopedEffects = 0;
+const sidebarService = {
+  registerFileViewer: (descriptor) => { viewer = descriptor; return () => {}; },
+};
+exports.apply({
+  effect: (fn) => fn(),
+  documentPreviews: { register: () => () => {} },
+  slots: { register: () => () => {} },
+  inject: (deps, run) => {
+    sidebarRequested = deps;
+    run({
+      get: (name) => (name === "betterSidebar" ? sidebarService : undefined),
+      effect: (fn) => {
+        scopedEffects += 1;
+        return fn();
+      },
+    });
+    return { then() {} };
+  },
+});
+
+check("waits for the betterSidebar client service",
+  Array.isArray(sidebarRequested) && sidebarRequested.includes("betterSidebar"),
+  JSON.stringify(sidebarRequested));
+check("registers one file viewer", Boolean(viewer));
+check("the viewer id is namespaced with the package name",
+  String(viewer?.id).startsWith("dsh-ipynb-preview:"), String(viewer?.id));
+check("the viewer claims exactly the .ipynb extension",
+  JSON.stringify(viewer?.exts) === '["ipynb"]', JSON.stringify(viewer?.exts));
+check("the viewer reads through the sidebar's own fs.read",
+  viewer?.fetchStrategy === "fsRead", String(viewer?.fetchStrategy));
+check("the viewer outranks the built-in code catch-all",
+  (viewer?.priority ?? 0) > -100, String(viewer?.priority));
+check("the viewer has a display title the settings page can show",
+  typeof viewer?.title === "function" ? viewer.title() === "Jupyter notebook" : viewer?.title,
+  typeof viewer?.title === "function" ? viewer.title() : String(viewer?.title));
+check("the viewer exposes a render component",
+  typeof viewer?.component === "function");
+
+// The registration must be owned by an effect, so cordis disposes it when the
+// plugin unloads; an unowned registration makes the next activation throw
+// "already registered".
+check("the registration is wrapped in an effect", scopedEffects === 1, String(scopedEffects));
+
+// A sidebar too old to offer the registry (or one whose service arrives
+// without it) must not crash the plugin.
+let threwOnLegacyService = null;
+try {
+  exports.apply({
+    effect: (fn) => fn(),
+    documentPreviews: { register: () => () => {} },
+    slots: { register: () => () => {} },
+    inject: (deps, run) => { run({ get: () => undefined, effect: (fn) => fn() }); },
+  });
+} catch (error) {
+  threwOnLegacyService = error;
+}
+check("a service without registerFileViewer is skipped, not fatal",
+  threwOnLegacyService === null, threwOnLegacyService?.message || "");
+
+// `formatBytes` is what the too-large branch prints, so pin its arithmetic.
+check("byte sizes are human-readable",
+  t.formatBytes(700) === "700 bytes" &&
+    t.formatBytes(2048) === "2.0 KB" &&
+    t.formatBytes(12 * 1024 * 1024) === "12.0 MB",
+  [t.formatBytes(700), t.formatBytes(2048), t.formatBytes(12 * 1024 * 1024)].join(" / "));
+check("an unknown size prints nothing rather than NaN",
+  t.formatBytes(undefined) === "" && t.formatBytes(NaN) === "");
+
 const md = (source, wrap = false) => renderToStaticMarkup(
   React.createElement("div", null, ...t.renderBlocks(source, wrap))
 );
@@ -653,6 +752,56 @@ console.log("\n=== images: zoom and save ===");
     (html.match(/sample-notebook-cell\d+-out\d+\.(?:png|jpg)/) || [])[0] || "none");
   check("the save name matches the notebook's own stem",
     /sample-notebook-cell\d+-out\d+\.png/.test(html));
+
+  /* ---- the sidebar viewer renders the same notebook ------------------ */
+
+  // better-sidebar hands the viewer the file's text as a string, so the same
+  // notebook must come out byte-for-byte identical to the document preview's
+  // render. One component serves both, and this is what proves they cannot
+  // drift apart.
+  console.log("\n=== dsh-better-sidebar viewer render ===");
+  const sidebarHtml = renderToStaticMarkup(
+    React.createElement(viewer.component, {
+      content: raw,
+      path: "notebooks/jupyter/sample-notebook.ipynb",
+      title: "sample-notebook.ipynb",
+      viewerId: viewer.id,
+    })
+  );
+  check("the sidebar viewer renders exactly what the document preview renders",
+    sidebarHtml === html,
+    `${sidebarHtml.length} vs ${html.length} bytes`);
+  check("the sidebar viewer reads the notebook, not its JSON",
+    sidebarHtml.includes('class="dshnb"') && !sidebarHtml.includes("&quot;cell_type&quot;"));
+
+  // Past the sidebar's 5 MiB ceiling `content` is absent and `largeFile` carries
+  // the size; the viewer has to say so instead of rendering an empty shell.
+  const tooLarge = stripTags(renderToStaticMarkup(
+    React.createElement(viewer.component, {
+      largeFile: { size: 12 * 1024 * 1024 },
+      path: "big.ipynb",
+      title: "big.ipynb",
+      viewerId: viewer.id,
+    })
+  ));
+  check("a notebook past the read limit explains itself",
+    tooLarge.includes("too large") && tooLarge.includes("12.0 MB"), tooLarge.trim());
+
+  // A corrupt notebook is JSON-parse-failing content. The sidebar has no
+  // renderer dropdown, so the note must not promise one.
+  const corrupt = stripTags(renderToStaticMarkup(
+    React.createElement(viewer.component, {
+      content: "{ not json",
+      path: "broken.ipynb",
+      title: "broken.ipynb",
+      viewerId: viewer.id,
+    })
+  ));
+  check("a corrupt notebook gets the sidebar's own hint",
+    corrupt.includes("Cannot render this notebook") &&
+      corrupt.includes("not notebook JSON") &&
+      !corrupt.includes("renderer dropdown"),
+    corrupt.trim().slice(0, 120));
 }
 
 /* ---- stylesheet ------------------------------------------------------ */

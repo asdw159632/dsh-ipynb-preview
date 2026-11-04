@@ -23,6 +23,10 @@ const interesting = [
   "renderInline", "renderBlocks", "highlightCode", "highlightLine",
   "normalizeLanguage", "parseNotebook", "joinSource", "esc", "katex",
   "ZOOM_MIN", "ZOOM_MAX", "ZOOM_STEP",
+  // The dsh-better-sidebar integration: a free identifier here breaks the
+  // whole client roster the moment the bundle is materialized.
+  "NotebookView", "NotebookBody", "BetterSidebarViewer", "formatBytes",
+  "BETTER_SIDEBAR_VIEWER_ID",
 ];
 
 console.log("=== declaration and reference counts ===");

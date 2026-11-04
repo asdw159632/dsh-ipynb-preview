@@ -415,6 +415,67 @@ check("zoomScroll is finite for a large scale",
     return Number.isFinite(next.left) && Number.isFinite(next.top);
   })());
 
+/* ---- the dsh-better-sidebar viewer ----------------------------------- */
+
+// dsh-better-sidebar mounts a viewer descriptor's component in its own editor
+// pane, where React's client renderer -- not the server renderer the other
+// suite uses -- decides whether the component survives. A hook mistake there
+// throws away the pane, so it is mounted here as well.
+console.log("\n=== dsh-better-sidebar viewer ===");
+const textOf = (node) => {
+  const out = [];
+  const visit = (n) => {
+    if (n.children && n.children.length === 0 && typeof n.textContent === "string") {
+      out.push(n.textContent);
+    }
+    for (const child of n.children || []) visit(child);
+  };
+  visit(node);
+  return out.join("\n");
+};
+
+const sidebarContainer = new El("div");
+documentStub.body.appendChild(sidebarContainer);
+const sidebarErrorsFrom = errors.length;
+const sidebarRoot = createRoot(sidebarContainer);
+try {
+  sidebarRoot.render(React.createElement(t.BetterSidebarViewer, {
+    content: raw,
+    path: "notebooks/jupyter/sample-notebook.ipynb",
+    title: "sample-notebook.ipynb",
+    viewerId: t.BETTER_SIDEBAR_VIEWER_ID,
+  }));
+} catch (error) {
+  errors.push("sidebar viewer render threw: " + error.message);
+}
+await new Promise((resolve) => setTimeout(resolve, 100));
+check("mounting the sidebar viewer does not throw",
+  errors.length === sidebarErrorsFrom,
+  errors.slice(sidebarErrorsFrom, sidebarErrorsFrom + 2).join(" | "));
+check("the sidebar viewer rendered the notebook",
+  countNodes(sidebarContainer) > 50, `${countNodes(sidebarContainer)} nodes`);
+check("the sidebar viewer shows the notebook header",
+  textOf(sidebarContainer).includes("Jupyter notebook"));
+
+// A notebook past the sidebar's read ceiling arrives with no text at all.
+const bigContainer = new El("div");
+documentStub.body.appendChild(bigContainer);
+const bigRoot = createRoot(bigContainer);
+try {
+  bigRoot.render(React.createElement(t.BetterSidebarViewer, {
+    largeFile: { size: 8 * 1024 * 1024 },
+    path: "big.ipynb",
+    title: "big.ipynb",
+    viewerId: t.BETTER_SIDEBAR_VIEWER_ID,
+  }));
+} catch (error) {
+  errors.push("too-large viewer render threw: " + error.message);
+}
+await new Promise((resolve) => setTimeout(resolve, 80));
+const bigText = textOf(bigContainer);
+check("a too-large notebook explains itself instead of rendering nothing",
+  /too large/.test(bigText) && /8\.0 MB/.test(bigText), bigText.trim());
+
 console.log(`\n${failures === 0 ? "NO FAILURE REPRODUCED" : failures + " CHECK(S) FAILED"}`);
 process.exit(failures === 0 ? 0 : 1);
 

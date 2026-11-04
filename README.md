@@ -7,7 +7,9 @@
 [![dsh-plugin](https://img.shields.io/badge/topic-dsh--plugin-4D6BFE)](https://github.com/topics/dsh-plugin)
 
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that
-renders Jupyter notebooks in the document preview pane: syntax-highlighted code,
+renders Jupyter notebooks in the document preview pane — and, when
+[dsh-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) is
+installed, in that plugin's sidebar file viewer too: syntax-highlighted code,
 real LaTeX, and zoomable figures — instead of raw JSON.
 
 Without it, opening a `.ipynb` in DSH shows its JSON source. With it, the file
@@ -21,6 +23,7 @@ opens as a notebook.
 | Figure zoom | Click any output figure to open it, then scroll or `+` / `−` to zoom continuously, drag to pan, `0` to fit |
 | Save figures | Names each figure after the notebook, e.g. `sample-notebook-cell3-out1.png` |
 | Outputs | Streams, `display_data`, `execute_result`, and error tracebacks with ANSI escapes stripped |
+| Sidebar preview | With `dsh-better-sidebar`, a notebook opened in its file tree or editor renders as a notebook, not as JSON in the code viewer |
 
 Everything is self-contained: the KaTeX engine and its web fonts are inlined into
 the client bundle, so no request leaves your machine.
@@ -64,6 +67,52 @@ tools/build-client.mjs generates lib/client.js from the template
 
 `lib/client.js` is generated, not hand-edited. Change `lib/client.template.js`
 and run `npm run build`.
+
+## dsh-better-sidebar: notebooks in the sidebar
+
+[dsh-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) takes over
+the right sidebar's file tree and editor pane. A notebook opened there never
+reaches the shipped document preview this plugin registers into, so without an
+integration it falls to that plugin's catch-all code viewer — raw JSON with a
+CodeMirror.
+
+When better-sidebar is installed, this plugin therefore also registers a **file
+viewer** for `.ipynb` through its `ctx.betterSidebar` service:
+
+```js
+scoped.effect(() => scoped.get("betterSidebar").registerFileViewer({
+  id: "dsh-ipynb-preview:notebook",
+  exts: ["ipynb"],
+  title: () => "Jupyter notebook",
+  priority: 0,
+  fetchStrategy: "fsRead",
+  component: BetterSidebarViewer,
+}))
+```
+
+How it behaves:
+
+- **Optional.** `betterSidebar` is deliberately *not* in the plugin's `inject`
+  list: a profile without better-sidebar must keep the shipped preview. The
+  registration runs in a scoped `ctx.inject(["betterSidebar"], …)` child, which
+  never runs when the service is absent. Nothing else in the plugin changes.
+- **No extra dependency.** No value or type import of `dsh-better-sidebar` is
+  made, so it need not be installed at build time, and there is no second copy
+  of it. The integration only needs the service (`registerFileViewer`), which
+  exists since better-sidebar v0.4.0.
+- **One renderer.** The sidebar viewer and the document preview render the same
+  component, so the same notebook looks the same in both places; the test suite
+  asserts both renders are byte-identical.
+- **Wrapped source lines.** The sidebar pane is narrow, so code cells wrap there
+  instead of scrolling sideways.
+- **Read limit.** The sidebar hands a viewer at most 5 MB of text. A larger
+  notebook shows its size and the limit instead of a render; the document
+  preview has no such limit.
+- **No network.** The sidebar reads the file through its own host route; the
+  notebook still renders entirely in the browser.
+
+Opening a notebook from a chat link, the workspace file list, or the sidebar
+file tree all end up in the same renderer.
 
 ## Development
 
